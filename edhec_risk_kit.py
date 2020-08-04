@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 
 def drawdown(return_series: pd.Series):
     """"
@@ -40,6 +41,16 @@ def get_hfi_returns():
     hfi.index = hfi.index.to_period('M')
     return hfi
 
+def get_ind_returns():
+    """
+    Load and format the Ken French 30 Industry Portfolios Value Weighted Monthly Returns
+    """
+    ind = pd.read_csv("ind30_m_vw_rets.csv", header=0, index_col=0, parse_dates=True)/100
+    ind.index = pd.to_datetime(ind.index, format = "%Y%m").to_period('M')
+    ind.columns = ind.columns.str.strip()
+    return ind
+    
+    
 def semideviation(r):
     """
     Returns the semideviation aka negative semideviation of r
@@ -142,3 +153,110 @@ def var_gaussian(r, level=5, modified=False):
             )
         
     return -(r.mean() + z*r.std(ddof=0))
+
+def annualize_rets(r, periods_per_year):
+    """
+    Annualizes  a set of returns
+
+    """
+    compounded_growth = (1+r).prod()
+    n_periods = r.shape[0]
+    return compounded_growth**(periods_per_year/n_periods)-1
+
+
+def annualize_vol(r, periods_per_year):
+    """
+    Annualizes the vol of a set of returns
+    
+    """
+    
+    #compute the standard deviation. So given a set of returns, compute the standard deviation and then scale it by the square root of the number of periods in a year.
+    return r.std()*(periods_per_year**0.5)
+
+def sharpe_ratio(r, riskfree_rate, periods_per_year):
+    """
+    Computes the annualized sharpe ratio of a set of returns
+    """
+    # convert the annual riskfree rate to per period
+    rf_per_period = (1+riskfree_rate)**(1/periods_per_year)-1
+    excess_ret = r - rf_per_period
+    ann_ex_ret = annualize_rets(excess_ret, periods_per_year)
+    ann_vol = annualize_vol(r, periods_per_year)
+    return ann_ex_ret/ann_vol
+
+
+def portfolio_return(weights, returns):
+    """
+    Weights-> Returns
+    """
+    return weights.T @ returns
+
+# covmat = covariance matrix
+def portfolio_vol(weights, covmat):
+    """
+    Weights-> Vol
+    """
+    return (weights.T @ covmat @ weights)**0.5
+
+
+def plot_ef2(n_points, er, cov, style=".-" ):
+    """
+    Plots the 2-asset efficient frontier
+    """
+    if er.shape[0] !=2 or er.shape[0]!=2:
+        raise ValueError("plot_ef2 can only plot 2-asset frontiers")
+    weights = [np.array([w,1-w]) for w in np.linspace(0,1,n_points)]
+    rets = [portfolio_return(w,er) for w in weights]
+    vols = [portfolio_vol(w,cov) for w in weights]
+
+    #efficient frontier
+    ef = pd.DataFrame({"Returns": rets, "Volatility": vols})
+    return ef.plot.line(x="Volatility", y="Returns", style=style)
+
+
+import numpy as np
+from scipy.optimize import minimize
+def minimize_vol(target_return, er, cov):
+    """
+    Returns the optimal weights that achieve the target return
+    given a set of expected returns and a covariance matrix
+    """
+    n = er.shape[0]
+    init_guess = np.repeat(1/n, n)
+    bounds = ((0.0, 1.0),) * n # an N-tuple of 2-tuples!
+    # construct the constraints
+    weights_sum_to_1 = {'type': 'eq',
+                        'fun': lambda weights: np.sum(weights) - 1
+    }
+    return_is_target = {'type': 'eq',
+                        'args': (er,),
+                        'fun': lambda weights, er: target_return - portfolio_return(weights,er)
+    }
+    weights = minimize(portfolio_vol, init_guess,
+                       args=(cov,), method='SLSQP',
+                       options={'disp': False},
+                       constraints=(weights_sum_to_1,return_is_target),
+                       bounds=bounds)
+    return weights.x
+
+import numpy as np
+def optimal_weights(n_points, er, cov):
+    """
+    -> list of weights to run the optimizer on to minimize the vol
+    """
+    target_rs = [np.linspace(er.min(), er.max(), n_points)]
+    weights = [erk.minimize_vol(target_return, er, cov) for target_return in  target_rs]
+    return weights
+    
+def plot_ef(n_points, er, cov):
+    """
+    Plots the multi-asset efficient frontier
+    """
+    weights = erk. optimal_weights (n_points, er, cov)
+    rets = [erk.portfolio_return(w,er) for w in weights]
+    vols = [erk.portfolio_vol(w,cov) for w in weights]
+    ef = pd.DataFrame({
+        "Returns": rets,
+        "Volatility": vols
+    })
+    return ef.plot.line(x="Volatility", y="Returns", style=".-")
